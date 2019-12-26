@@ -1,0 +1,25 @@
+#pragma PROGS_DAT "../qwprogs.dat"
+#pragma PROGS_SRC "progs.src"
+
+#includelist
+
+predefs.qc
+defs.qc
+subs.qc
+combat.qc
+items.qc
+fclient.qc
+thunvote.qc
+weapons.qc
+world.qc
+client.qc
+spectate.qc
+player.qc
+doors.qc
+buttons.qc
+triggers.qc
+plats.qc
+misc.qc
+server.qc
+
+#endlist

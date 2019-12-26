@@ -1,0 +1,11 @@
+warning: subs.pqc:25:SetMovedir: not all control paths return a value
+warning: items.pqc:175:droptofloor: Too few parameters. See definition defs.pqc(651)
+warning: weapons.pqc:99:org redeclared
+warning: weapons.pqc:950:W_BestWeapon must return a value
+warning: client.pqc:153:FindIntermission: not all control paths return a value
+warning: client.pqc:464:ValidateUser: not all control paths return a value
+warning: misc.pqc:179:No operation performed
+warning: misc.pqc:252:droptofloor: Too few parameters. See definition defs.pqc(651)
+warning: misc.pqc:285:droptofloor: Too few parameters. See definition defs.pqc(651)
+warning: misc.pqc:338:vec redeclared
+warning: misc.pqc:594:makestatic: Too few parameters. See definition defs.pqc(688)

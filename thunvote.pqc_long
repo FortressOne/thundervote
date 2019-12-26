@@ -1,0 +1,1849 @@
+/*
+.float          motd_time, motd_count, bind_count, minvotes, team_check, vote_delay, id_delay, alias_delay, alias_num;
+.float		map_no_since;
+.string         vote, votetime;
+.string         map_list_txt, map_list_imp, map_name, impulse_value, realteam, map_desc;
+.float		observer;
+*/
+
+/*
+-vote.cfg
+setinfo no_id 0
+setinfo no_motd 0
+setinfo no_alias 0
+setinfo no_set 1
+setinfo sbr ""
+setinfo sbs ""
+
+-votedone.cfg
+setinfo no_id ""
+setinfo no_motd ""
+setinfo no_alias ""
+setinfo no_set ""
+setinfo sbr 1
+setinfo sbs 2
+*/
+void() player_stand1;
+entity() SelectSpawnPoint;
+void() set_suicide_frame;
+void() IntermissionThink;
+void() GotoNextMap;
+void() WaterMove;
+void() PlayerDeathThink;
+void() PlayerJump;
+
+void () ChangeTheMap;
+void() TimerThink;
+void() UnBindAll;
+
+//bliP
+string (float f) GetSkin;
+void() ResetPlayer;
+void(entity targ, entity inflictor, entity attacker, float damage) T_Damage;
+//<-
+
+float   modelindex_eyes, modelindex_player;
+float   intermission_running;
+
+void (vector org) spawn_tfog;
+void (vector org, entity death_owner) spawn_tdeath;
+
+void() player_pain;
+void() PlayerDie;
+
+string nextmap;
+
+// ThunderVote Variables
+
+float   TV_state;
+
+float   key_min_votes, key_nuf_votes, key_min_time, key_nuf_time, key_min_approval, key_nuf_approval, key_max_time;
+
+float   TV_highest_count, TV_draws, TV_current_count, TV_numvoters, TV_numplayers;
+float   TV_voters_percent, TV_current_percent;
+float   TV_highest_percent, TV_current_percent2;
+float	TV_numobservers, TV_anarchy_mode; //bliP
+string  TV_best_map_desc, TV_best_map_name;
+//float foo;
+
+
+void() DecoThink =
+{
+    local float randy;
+
+    if (self.noise)
+    {
+	if (self.team)
+	    sound(self, CHAN_VOICE, self.noise, 1, ATTN_NONE);
+	else
+	    sound(self, CHAN_VOICE, self.noise, 1, ATTN_NORM);
+
+	randy = 0;
+
+	if (self.frags)
+	{
+	    randy = random() * self.frags;
+	    randy = randy - (self.frags / 2);
+	}
+
+	self.nextthink = time + self.health + randy;
+    }
+
+};
+
+void() info_decoration =
+{
+    if (self.mdl)
+    {
+	precache_model(self.mdl);
+	precache_model2(self.mdl);
+	setmodel(self, self.mdl);
+    }
+    if (self.noise)
+    {
+	precache_sound(self.noise);
+	precache_sound2(self.noise);
+    }
+// Elmar Hoffman 05-11
+    if (!(self.mins) && !(self.maxs))
+    {
+	setsize (self, '-16 -16 -24' , '16 16 32');
+    }
+// --
+    if (self.pausetime > 0.2)
+	self.nextthink = time + self.pausetime;
+    else
+	self.nextthink = time + 0.2;
+    self.think = DecoThink;
+};
+
+void() map_candidate =
+{
+};
+
+
+void() motd_stuff =
+{
+};
+
+/*
+============
+ThunderVote: WorldSounds
+
+precache custom sounds based on serverinfo, called by worldspawn
+============
+*/
+void() WorldSounds =
+{
+    local string s, t, u, v;
+
+    s = "";
+    s = infokey(world, "snd_vote");
+// Elmar Hoffman 05-11
+    if ((s != "misc/null.wav"))
+    {
+	if ((s == "") || (s == "0"))
+	    s = "doors/baseuse.wav";
+	precache_sound (s);
+    }
+// --
+    t = "";
+    t = infokey(world, "snd_nope");
+// Elmar Hoffman 05-11
+    if ((t != "misc/null.wav"))
+    {
+	if ((t == "") || (t == "0"))
+	    t = "doors/basetry.wav";
+	precache_sound (t);
+    }
+// --
+//    u = "";
+//    u = infokey(world, "snd_timer");
+// Elmar Hoffman 05-11
+//    if ((u != "misc/null.wav"))
+//    {
+//	if ((u == "") || (u == "0"))
+//	    u = "doors/runetry.wav";
+//	precache_sound (u);
+//   }
+// --
+    v = "";
+    v = infokey(world, "snd_timeover");
+// Elmar Hoffman 05-11
+    if ((v != "misc/null.wav"))
+    {
+	if ((v == "") || (v == "0"))
+	    v = "doors/meduse.wav";
+	precache_sound (v);
+    }
+// --
+    v = "";
+    v = infokey(world, "snd_anarchy");
+// Elmar Hoffman 05-11
+    if ((v != "misc/null.wav"))
+    {
+	if ((v == "") || (v == "0"))
+	{
+	    v = "items/damage.wav";
+	}
+	precache_sound (v);
+    }
+// --
+    precache_sound ("items/damage2.wav"); //bliP
+};
+
+/*
+============
+ThunderVote: Soundstring
+
+returns custom sound string
+============
+*/
+string(float f) Soundstring =
+{
+    local string s;
+    s = "";
+
+    if (f == 1) // voting sound (snd_vote)
+    {
+	s = infokey(world, "snd_vote");
+	if ( (s == "") || (s == "0") )
+	    s = "doors/baseuse.wav";
+    }
+    else if (f == 2) // error sound (snd_nope)
+    {
+	s = infokey(world, "snd_nope");
+	if ( (s == "") || (s == "0") )
+	    s = "doors/basetry.wav";
+    }
+//    else if (f == 3) // timer sound (snd_timer)
+//    {
+//	s = infokey(world, "snd_timer");
+//	if ( (s == "") || (s == "0") )
+//	    s = "doors/runetry.wav";
+//    }
+    else if (f == 4) // timeover sound (snd_timeover)
+    {
+	s = infokey(world, "snd_timeover");
+	if ( (s == "") || (s == "0") )
+	    s = "doors/meduse.wav";
+    }
+    else if (f == 5) // anarchy sound (snd_anarchy)
+    {
+	s = infokey(world, "snd_anarchy");
+	if ( (s == "") || (s == "0") )
+	    s = "items/damage.wav";
+    }
+    return s;
+};
+
+/*
+============
+CountVotes
+
+Counts votes and sets some public variables
+============
+*/
+void() CountVotes =
+{
+    local entity tmp, tmp2;
+    local float counter;
+
+    TV_numvoters = 0;
+    TV_numplayers = 0;
+    TV_numobservers = 0;
+    TV_highest_count = 0;
+    TV_draws = 0;
+
+    tmp = find(world, classname, "player");
+    while (tmp) // counts how many players already voted
+    {
+	if (tmp.observer == 1) //bliP
+	{
+		TV_numobservers = TV_numobservers + 1;
+	}
+	else if (tmp.deadflag == DEAD_NO)
+	{
+     		TV_numplayers = TV_numplayers + 1;
+		if (tmp.vote != "")
+			TV_numvoters = TV_numvoters + 1;
+        }
+	tmp = find(tmp, classname, "player");
+    }
+
+    tmp = find(world, classname, "map_candidate");
+    while (tmp)
+    {
+	counter = 0;
+	tmp2 = find(world, classname, "player");
+	while (tmp2)
+	{
+	    if (tmp2.vote == tmp.map_name)
+		counter = counter + 1;
+
+	    tmp2 = find(tmp2, classname, "player");
+	}
+	if (self.vote == tmp.map_name)
+	    TV_current_count = counter;
+	if (counter > TV_highest_count)
+	{
+	    TV_highest_count = counter;
+	    TV_best_map_name = tmp.map_name;
+	    TV_best_map_desc = tmp.map_desc;
+	    TV_draws = 0;
+	}
+	else if ((counter == TV_highest_count) && (TV_highest_count != 0))
+	    TV_draws = TV_draws + 1;
+
+	tmp = find(tmp, classname, "map_candidate");
+    }
+    TV_voters_percent = ceil(TV_numvoters * 100 / TV_numplayers);
+    TV_current_percent = ceil(TV_current_count * 100 / TV_numplayers);
+
+    TV_highest_percent = ceil(TV_highest_count * 100 / TV_numvoters);
+    TV_current_percent2 = ceil(TV_current_count * 100 / TV_numvoters);
+};
+
+void() GotoNextMap = // only called by teleporters
+{
+    local string newmap, t;
+//ZOID: 12-13-96, samelevel is overloaded, only 1 works for same level
+
+	if (cvar("samelevel") == 1)     // if samelevel is set, stay on same level
+	newmap = mapname;
+		// configurable map lists, see if the current map exists as a
+		// serverinfo/localinfo var
+    else
+		newmap = infokey(world, mapname);
+    if (newmap != "")
+	TV_best_map_name = newmap;
+    else
+	TV_best_map_name = nextmap;
+    ChangeTheMap ();    
+};
+
+/*
+============
+ClientKill
+
+Player entered the suicide command
+============
+*/
+void() ClientKill = {}; // who cares
+
+/*
+===========
+PutClientInServer
+
+called each time a player enters a new level
+============
+*/
+void() PutClientInServer =
+{
+	local	entity spot;
+
+        self.classname = "player";
+	if (TV_anarchy_mode) //bliP
+	{
+		self.observer = 1;
+		self.health = 1;
+		self.solid = SOLID_NOT;
+		self.movetype = MOVETYPE_NOCLIP;
+	}
+	else
+	{
+		self.observer = 0;
+		self.health = 25;
+   		self.solid = SOLID_SLIDEBOX;
+		//self.movetype = MOVETYPE_WALK;
+	}
+	self.deadflag = DEAD_NO;
+	self.takedamage = DAMAGE_NO;  	//You can't take damage
+	self.show_hostile = 0;
+	self.max_health = 250;
+	self.flags = FL_CLIENT;
+	self.can_respawn = 0;
+        self.air_finished = time + 12;
+	self.super_damage_finished = 0;
+	self.radsuit_finished = 0;
+	self.invisible_finished = 0;
+	self.invincible_finished = 0;
+	self.invincible_time = 0;
+	self.effects = 0;
+	W_SetCurrentAmmo ();
+	self.attack_finished = time;
+	self.th_pain = player_pain;
+	self.th_die = PlayerDie;
+	self.pausetime = 0; // pausetime is set by teleporters to keep the player from moving a while
+
+	spot = SelectSpawnPoint();
+        self.maxspeed = 320;
+
+	self.origin = spot.origin + '0 0 1';
+	self.angles = spot.angles;
+	self.fixangle = TRUE; // turn this way immediately
+
+	setmodel (self, "progs/eyes.mdl");
+	modelindex_eyes = self.modelindex;
+	setmodel (self, "progs/player.mdl");
+	modelindex_player = self.modelindex;
+
+	if (TV_anarchy_mode) //bliP
+	{
+		setmodel (self, "progs/eyes.mdl");
+		self.invisible_finished = time + 300;
+		self.items = IT_INVISIBILITY;
+	}
+	else
+	{
+		setmodel (self, "progs/player.mdl");
+		self.items = IT_AXE;
+	}
+	setsize (self, VEC_HULL_MIN, VEC_HULL_MAX);
+	self.view_ofs = '0 0 22';
+	self.velocity = '0 0 0';
+
+	player_stand1 ();
+
+	makevectors(self.angles);
+	spawn_tfog (self.origin + v_forward*20);
+	spawn_tdeath (self.origin, self);
+
+        localcmd ("serverinfo oztf \"\"\n");
+        localcmd ("serverinfo status \"\"\n");
+};
+
+/*
+============
+ThunderVote: UpdateKeys
+
+Update ThunderVote rules in case some freakin' wierdo changes them for any reason
+============
+*/
+void() UpdateKeys =
+{
+    key_min_votes = stof(infokey(world, "min_votes"));
+    key_nuf_votes = stof(infokey(world, "nuf_votes"));
+    key_min_time = stof(infokey(world, "min_time")) * 60;
+    key_nuf_time = stof(infokey(world, "nuf_time")) * 60;
+    key_max_time = stof(infokey(world, "max_time")) * 60;
+    key_min_approval = stof(infokey(world, "min_approval"));
+    key_nuf_approval = stof(infokey(world, "nuf_approval"));
+};
+
+/*
+============
+ThunderVote: F2S
+
+Stupid ftos doesn't always work so I have to do this (*sigh*) ... it's so hummiliating
+============
+*/
+string (float f) F2S =
+{
+    if (f == 0) return "0";
+    if (f == 1) return "1"; if (f == 2) return "2"; if (f == 3) return "3"; if (f == 4) return "4"; if (f == 5) return "5";
+    if (f == 6) return "6"; if (f == 7) return "7"; if (f == 8) return "8"; if (f == 9) return "9"; if (f == 10) return "10";
+
+    if (f == 11) return "11"; if (f == 12) return "12"; if (f == 13) return "13"; if (f == 14) return "14"; if (f == 15) return "15";
+    if (f == 16) return "16"; if (f == 17) return "17"; if (f == 18) return "18"; if (f == 19) return "19"; if (f == 20) return "20";
+
+    if (f == 21) return "21"; if (f == 22) return "22"; if (f == 23) return "23"; if (f == 24) return "24"; if (f == 25) return "25";
+    if (f == 26) return "26"; if (f == 27) return "27"; if (f == 28) return "28"; if (f == 29) return "29"; if (f == 30) return "30";
+
+    if (f == 31) return "31"; if (f == 32) return "32"; if (f == 33) return "33"; if (f == 34) return "34"; if (f == 35) return "35";
+    if (f == 36) return "36"; if (f == 37) return "37"; if (f == 38) return "38"; if (f == 39) return "39"; if (f == 40) return "40";
+
+    if (f == 41) return "41"; if (f == 42) return "42"; if (f == 43) return "43"; if (f == 44) return "44"; if (f == 45) return "45";
+    if (f == 46) return "46"; if (f == 47) return "47"; if (f == 48) return "48"; if (f == 49) return "49"; if (f == 50) return "50";
+
+    if (f == 51) return "51"; if (f == 52) return "52"; if (f == 53) return "53"; if (f == 54) return "54"; if (f == 55) return "55";
+    if (f == 56) return "56"; if (f == 57) return "57"; if (f == 58) return "58"; if (f == 59) return "59"; if (f == 60) return "60";
+
+    if (f == 61) return "61"; if (f == 62) return "62"; if (f == 63) return "63"; if (f == 64) return "64"; if (f == 65) return "65";
+    if (f == 66) return "66"; if (f == 67) return "67"; if (f == 68) return "68"; if (f == 69) return "69"; if (f == 70) return "70";
+
+    if (f == 71) return "71"; if (f == 72) return "72"; if (f == 73) return "73"; if (f == 74) return "74"; if (f == 75) return "75";
+    if (f == 76) return "76"; if (f == 77) return "77"; if (f == 78) return "78"; if (f == 79) return "79"; if (f == 80) return "80";
+
+    if (f == 81) return "81"; if (f == 82) return "82"; if (f == 83) return "83"; if (f == 84) return "84"; if (f == 85) return "85";
+    if (f == 86) return "86"; if (f == 87) return "87"; if (f == 88) return "88"; if (f == 89) return "89"; if (f == 90) return "90";
+
+    if (f == 91) return "91"; if (f == 92) return "92"; if (f == 93) return "93"; if (f == 94) return "94"; if (f == 95) return "95";
+    if (f == 96) return "96"; if (f == 97) return "97"; if (f == 98) return "98"; if (f == 99) return "99"; if (f == 100) return "100";
+// 100+
+    if (f == 101) return "101"; if (f == 102) return "102"; if (f == 103) return "103"; if (f == 104) return "104"; if (f == 105) return "105";
+    if (f == 106) return "106"; if (f == 107) return "107"; if (f == 108) return "108"; if (f == 109) return "109"; if (f == 110) return "110";
+
+    if (f == 111) return "111"; if (f == 112) return "112"; if (f == 113) return "113"; if (f == 114) return "114"; if (f == 115) return "115";
+    if (f == 116) return "116"; if (f == 117) return "117"; if (f == 118) return "118"; if (f == 119) return "119"; if (f == 120) return "120";
+
+    if (f == 121) return "121"; if (f == 122) return "122"; if (f == 123) return "123"; if (f == 124) return "124"; if (f == 125) return "125";
+    if (f == 126) return "126"; if (f == 127) return "127"; if (f == 128) return "128"; if (f == 129) return "129"; if (f == 130) return "130";
+
+    if (f == 131) return "131"; if (f == 132) return "132"; if (f == 133) return "133"; if (f == 134) return "134"; if (f == 135) return "135";
+    if (f == 136) return "136"; if (f == 137) return "137"; if (f == 138) return "138"; if (f == 139) return "139"; if (f == 140) return "140";
+
+    if (f == 141) return "141"; if (f == 142) return "142"; if (f == 143) return "143"; if (f == 144) return "144"; if (f == 145) return "145";
+    if (f == 146) return "146"; if (f == 147) return "147"; if (f == 148) return "148"; if (f == 149) return "149"; if (f == 150) return "150";
+
+    if (f == 151) return "151"; if (f == 152) return "152"; if (f == 153) return "153"; if (f == 154) return "154"; if (f == 155) return "155";
+    if (f == 156) return "156"; if (f == 157) return "157"; if (f == 158) return "158"; if (f == 159) return "159"; if (f == 160) return "160";
+
+    if (f == 161) return "161"; if (f == 162) return "162"; if (f == 163) return "163"; if (f == 164) return "164"; if (f == 165) return "165";
+    if (f == 166) return "166"; if (f == 167) return "167"; if (f == 168) return "168"; if (f == 169) return "169"; if (f == 170) return "170";
+
+    if (f == 171) return "171"; if (f == 172) return "172"; if (f == 173) return "173"; if (f == 174) return "174"; if (f == 175) return "175";
+    if (f == 176) return "176"; if (f == 177) return "177"; if (f == 178) return "178"; if (f == 179) return "179"; if (f == 180) return "180";
+
+    if (f == 181) return "181"; if (f == 182) return "182"; if (f == 183) return "183"; if (f == 184) return "184"; if (f == 185) return "185";
+    if (f == 186) return "186"; if (f == 187) return "187"; if (f == 188) return "188"; if (f == 189) return "189"; if (f == 190) return "190";
+
+    if (f == 191) return "191"; if (f == 192) return "192"; if (f == 193) return "193"; if (f == 194) return "194"; if (f == 195) return "195";
+    if (f == 196) return "196"; if (f == 197) return "197"; if (f == 198) return "198"; if (f == 199) return "199"; if (f == 200) return "200";
+// 200+
+    if (f == 201) return "201"; if (f == 202) return "202"; if (f == 203) return "203"; if (f == 204) return "204"; if (f == 205) return "205";
+    if (f == 206) return "206"; if (f == 207) return "207"; if (f == 208) return "208"; if (f == 209) return "209"; if (f == 210) return "210";
+
+    if (f == 211) return "211"; if (f == 212) return "212"; if (f == 213) return "213"; if (f == 214) return "214"; if (f == 215) return "215";
+    if (f == 216) return "216"; if (f == 217) return "217"; if (f == 218) return "218"; if (f == 219) return "219"; if (f == 220) return "220";
+
+    if (f == 221) return "221"; if (f == 222) return "222"; if (f == 223) return "223"; if (f == 224) return "224"; if (f == 225) return "225";
+    if (f == 226) return "226"; if (f == 227) return "227"; if (f == 228) return "228"; if (f == 229) return "229"; if (f == 230) return "230";
+
+    if (f == 231) return "231"; if (f == 232) return "232"; if (f == 233) return "233"; if (f == 234) return "234"; if (f == 235) return "235";
+    if (f == 236) return "236"; if (f == 237) return "237"; if (f == 238) return "238"; if (f == 239) return "239"; if (f == 240) return "240";
+
+    if (f == 241) return "241"; if (f == 242) return "242"; if (f == 243) return "243"; if (f == 244) return "244"; if (f == 245) return "245";
+    if (f == 246) return "246"; if (f == 247) return "247"; if (f == 248) return "248"; if (f == 249) return "249"; if (f == 250) return "250";
+
+    if (f == 251) return "251"; if (f == 252) return "252"; if (f == 253) return "253"; if (f == 254) return "254"; if (f == 255) return "255";
+    if (f == 256) return "256"; if (f == 257) return "257"; if (f == 258) return "258"; if (f == 259) return "259"; if (f == 260) return "260";
+
+    if (f == 261) return "261"; if (f == 262) return "262"; if (f == 263) return "263"; if (f == 264) return "264"; if (f == 265) return "265";
+    if (f == 266) return "266"; if (f == 267) return "267"; if (f == 268) return "268"; if (f == 269) return "269"; if (f == 270) return "270";
+
+    if (f == 271) return "271"; if (f == 272) return "272"; if (f == 273) return "273"; if (f == 274) return "274"; if (f == 275) return "275";
+    if (f == 276) return "276"; if (f == 277) return "277"; if (f == 278) return "278"; if (f == 279) return "279"; if (f == 280) return "280";
+
+    if (f == 281) return "281"; if (f == 282) return "282"; if (f == 283) return "283"; if (f == 284) return "284"; if (f == 285) return "285";
+    if (f == 286) return "286"; if (f == 287) return "287"; if (f == 288) return "288"; if (f == 289) return "289"; if (f == 290) return "290";
+
+    if (f == 291) return "291"; if (f == 292) return "292"; if (f == 293) return "293"; if (f == 294) return "294"; if (f == 295) return "295";
+    if (f == 296) return "296"; if (f == 297) return "297"; if (f == 298) return "298"; if (f == 299) return "299"; if (f == 300) return "300";
+    return "oops";
+};
+
+
+/*
+============
+ThunderVote: InvalidateCandidates
+
+Sets invalid flag on candidates, called by worldspawn
+============
+*/
+void () InvalidateCandidates =
+{
+    local entity cand;
+    local string temp, nsstr;
+    local float ns, nscounter, nt, grp;
+
+    cand = find(world, classname, "map_candidate");
+    while (cand)
+    {
+	cand.frags = 0;
+	cand = find(cand, classname, "map_candidate");
+    }
+
+    ns = stof(infokey(world, "no_since"));
+    nscounter = 1;
+    if (ns != 0)
+	while (nscounter <= ns)
+	{
+	    nsstr = F2S(nscounter);
+	    temp = infokey(world, nsstr);
+
+	    if (temp != "_")
+	    {
+		grp = 0;
+
+		cand = find(world, classname, "map_candidate");
+		while (cand)
+		{
+		    if (cand.map_name == temp) //bliP
+		    {
+			grp = cand.map_no_group;
+		    }
+		    cand = find(cand, classname, "map_candidate");
+		}
+
+		cand = find(world, classname, "map_candidate");
+		while (cand)
+		{
+		    if (((cand.map_name == temp) && (cand.map_no_since == 1)) || ((cand.map_no_since == 1) && (cand.map_no_group == grp) && (cand.map_no_group > 0))) //bliP
+		    {
+			cand.frags = cand.frags + 1; // candidate's in the banned list, invalidate
+			cand.map_desc = "’Ó·ˆ·ÈÏ·‚ÏÂ";
+		    }
+		    cand = find(cand, classname, "map_candidate");
+		}
+/*
+		cand = find(world, classname, "map_candidate");
+		while (cand)
+		{
+		    if ((cand.map_name == temp) && (cand.map_no_since == 1)) //bliP
+		    {
+			cand.frags = cand.frags + 1; // candidate's in the banned list, invalidate
+			cand.map_desc = "’Ó·ˆ·ÈÏ·‚ÏÂ";
+		    }
+		    cand = find(cand, classname, "map_candidate");
+		}
+*/
+	    }
+	    nscounter = nscounter + 1;
+	}
+};
+
+/*
+============
+ThunderVote: ChangeTheMap
+
+Change map stuff
+============
+*/
+void () ChangeTheMap =
+{
+  local float nr, ns, nscount, reps;
+  local string t, lmap, maxmap, maxmapname;
+  local string temp, temp2, nsstr, nsoldstr;
+  local entity pl;            // Elmar Hoffman 05-11
+
+  UnBindAll ();
+
+  //bliP
+  /* if (random() < 0.8) {
+    localcmd ("set sn -1\n");
+    //bprint(PRINT_HIGH, "Sniper limit: disabled\n");
+  }
+  else {
+    localcmd ("set sn 1\n");
+    //bprint(PRINT_HIGH, "Sniper limit: 1 per team\n");
+  }
+  */
+
+  ns = stof(infokey(world, "no_since"));
+  if (ns != 0)
+  {
+	nscount = 1;
+	nsstr = "1";
+
+	temp = TV_best_map_name;
+	while (nscount <= ns)
+	{
+	    temp2 = infokey(world, nsstr);
+	    if (temp2 == "")
+		temp2 = "_";
+
+	    nsoldstr = nsstr;
+	    nscount = nscount + 1;
+	    nsstr = F2S(nscount);
+
+	    localcmd("localinfo ");
+	    localcmd(nsoldstr);
+	    localcmd(" ");
+	    localcmd(temp);
+	    localcmd("\n");
+
+	    temp = temp2;
+	}
+    }
+
+    t = "";
+    t = infokey(world, "std_cfg");
+    if ((t == "") || (t == "0")) t = "standard.cfg";
+    localcmd ("exec ");
+    localcmd (t);
+    localcmd ("\n");
+    t = "";
+    t = infokey(world, "map_cfgs");
+    if (t != "" && t != "0")
+    {
+	localcmd ("exec qwmcycle/");
+	localcmd (TV_best_map_name);
+	localcmd (".cfg\n");
+    }
+
+// Elmar Hoffman 05-11
+    pl = find(world, classname, "player");
+    while ((pl != world))
+    {
+	stuffcmd(pl, "exec votedone.cfg\n");
+
+	pl = find(pl, classname, "player");
+    }
+// --
+
+    changelevel(TV_best_map_name);
+};
+
+/*
+===========
+ThunderVote: BroadcastSound
+
+Plays a sound to all players with stuffcmd
+============
+*/
+
+void(string sfx) BroadcastSound =
+{
+    local entity pl;
+    pl = find(world, classname, "player");
+    while ((pl != world))
+    {
+	if (pl.deadflag == 0)
+	{
+	    stuffcmd(pl, "play ");
+	    stuffcmd(pl, sfx);
+	    stuffcmd(pl, "\n");
+	}
+
+	pl = find(pl, classname, "player");
+    }
+};
+
+/*
+============
+ThunderVote: TimerSpawn
+
+Timer spawn function
+============
+*/
+void() TimerSpawn =
+{
+    local entity t;
+    t = spawn();
+    t.nextthink = time + 0.1;
+    t.think = TimerThink;
+    t.health = 0;
+    t.frags = 0;
+    //t.weapon = 0;
+    TV_state = 0;
+    TV_anarchy_mode = 0;
+    //intermission_running = 0;
+    //foo = 0;
+};
+
+/*
+============
+ThunderVote: TimerMessages
+
+Timer output
+============
+*/
+void () TimerMessages =
+{
+    local float f, g, the_time;
+    local string s;
+
+    if ((key_min_time <= 0) && (key_nuf_time <= 0) && (key_max_time <= 0))
+	return;
+
+    if ((key_nuf_time > 0) && ((key_nuf_time > self.health - 0.01) && (key_nuf_time < self.health + 0.01)))
+    {
+	bprint(PRINT_HIGH, "Maximum timelimit reached\n");
+	BroadcastSound(Soundstring(4));
+    }
+    else if ((key_min_time > 0) && ((key_min_time > self.health - 0.01) && (key_min_time < self.health + 0.01)))
+    {
+	bprint(PRINT_HIGH, "Minimum timelimit reached\n");
+	BroadcastSound(Soundstring(4));
+    }
+
+    the_time = -1;
+    if (self.health < key_nuf_time)
+    {
+	if ((key_min_time < key_nuf_time) && (self.health < key_min_time))
+	    the_time = key_min_time;
+	else
+	    the_time = key_nuf_time;
+    }
+    else if (self.health < key_min_time)
+        the_time = key_min_time;
+
+
+    f = -1;
+    if (the_time == -1)
+      f = self.weapon - time; //we're in anarchy mode
+    else
+      f = the_time - self.health;
+
+    if ( (key_nuf_time > 0) || (key_min_time > 0) || (f != -1) ) // time will be reported
+    {
+	// debug
+	//s = ftos(f);
+	//bprint(PRINT_HIGH, s);
+        //bprint(PRINT_HIGH, " <-----------\n");
+
+	if (f > 59) // report minutes
+	{
+	    if ( ((f < 60.05) && (f > 59.95)) || ((f < 120.05) && (f > 119.95)) ||
+	    ((f < 300.05) && (f > 299.95)) || ((f < 600.05) && (f > 599.95)) ||
+	    ((f < 1200.05) && (f > 1199.95)) || ((f < 1800.05) && (f > 1799.95)) ||
+	    ((f < 2700.05) && (f > 2699.95)) ) // 45, 30, 20, 10, 2, 1 minutes
+	    {
+		g = f / 60;
+		g = rint(g);
+		s = ftos(g);
+		bprint(PRINT_HIGH, "ê");
+		bprint(PRINT_HIGH, s);
+                bprint(PRINT_HIGH, "ë minute");
+                if (s != "1")
+                    bprint(PRINT_HIGH, "s");
+                bprint(PRINT_HIGH, " remaining\n");
+		//BroadcastSound(Soundstring(3)); //bliP
+		return;
+	    }
+	}
+	else // report seconds
+	{
+
+	    if ( ((f < 45.05) && (f > 44.95)) ||
+	    ((f < 30.05) && (f > 29.95)) ||
+	    ((f < 20.05) && (f > 19.95)) ||
+	    ((f < 10.05) && (f > 9.95))) // 45, 30, 20, 10 seconds
+	    {
+		f = rint(f);
+		s = ftos(f);
+		bprint(PRINT_HIGH, "ê");
+		bprint(PRINT_HIGH, s);
+                bprint(PRINT_HIGH, "ë second");
+                if (s != "1")
+                    bprint(PRINT_HIGH, "s");
+                bprint(PRINT_HIGH, " remaining\n");
+		//BroadcastSound(Soundstring(3)); //bliP
+		return;
+	    }
+	    else if ( ((f < 5.05) && (f > 4.95)) ||
+	    ((f < 4.05) && (f > 3.95)) ||
+	    ((f < 3.05) && (f > 2.95)) ||
+	    ((f < 2.05) && (f > 1.95)) ||
+	    ((f < 1.05) && (f > 0.95)) ) // final countdown
+	    {
+		f = rint(f);
+		s = ftos(f);
+		bprint(PRINT_HIGH, "ê");
+		bprint(PRINT_HIGH, s);
+                bprint(PRINT_HIGH, "ë second");
+                if (s != "1")
+                    bprint(PRINT_HIGH, "s");
+                bprint(PRINT_HIGH, "\n");
+		//BroadcastSound(Soundstring(3)); //bliP
+	    }
+	}
+    }
+};
+
+/*
+===========
+ThunderVote: SetAnarchy
+
+sets players properties for Anarchy Mode
+============
+*/
+void() SetAnarchy =
+{
+    local entity dude;
+    local string s;
+
+    if(!TV_anarchy_mode) //bliP
+    {
+        BroadcastSound(Soundstring(5));
+        dude = find (world, classname, "player");
+        while (dude != world)
+        {
+	    if (dude.deadflag == DEAD_NO)
+            {
+   		stuffcmd(dude, "bf\n");
+                dude.items = dude.items | IT_QUAD;
+		dude.super_time = 1;
+		dude.super_damage_finished = time + 180;
+	    }
+	    dude.takedamage = DAMAGE_AIM;
+	    dude = find (dude, classname, "player");
+        }
+    }    
+};
+
+/*
+============
+ThunderVote: TimerThink
+
+Timer think function
+============
+*/
+void() TimerThink =
+{
+    local float mt, mv, ma, nt, nv, na, f;
+    local string s;
+    local entity pl;
+
+    self.nextthink = time + 0.1;
+    self.health = self.health + 0.1;
+
+    if (self.frags < time) // just in case some asshole changes localinfo keys
+    {
+	if (TV_state == 3) // Anarchy mode
+	{
+            //--this is commented out cause it'd happen twice when it shouldn't
+	    //SetAnarchy ();
+	    //TV_anarchy_mode = 1; //bliP
+            //bprint(PRINT_HIGH,"here man again\n");
+            //self.weapon = time + 15;
+	    self.frags = time + 2;
+	}
+	else
+	{
+	    self.frags = time + 5;
+	    UpdateKeys ();
+	    InvalidateCandidates ();
+	}
+    }   
+
+    if (TV_state == -1) // decision made
+    {
+	if (self.health > 5) // omg, 5 seconds passed, I assume the map was not found
+	{
+	    TV_state = -2;
+	    self.health = 0;
+	    bprint(PRINT_HIGH, "≈““œ“∫ Map not found. Please inform the server admin about this error\n");
+	    s = "";
+	    s = infokey(world, "tv_cfg");
+	    if ((s == "") || (s == "0")) s = "thundervote.cfg";
+	    localcmd("exec ");
+	    localcmd(s);
+	    localcmd("\n");
+	}
+	return;
+    }
+
+    if (TV_state == -2) // wtf!? thundervote.cfg not found either! voting can't restart, crash the damned server
+    {
+	if (self.health > 5)
+	{
+	    bprint(PRINT_HIGH, "∆¡‘¡Ã ≈““œ“∫ thundervote.cfg not found. Please inform the server admin about this error. Server will shut down\n");
+	    objerror("FATAL ERROR: Map not found and thundervote.cfg was not available to restart voting.");
+	}
+	return;
+    }
+
+    CountVotes ();
+
+    TimerMessages ();
+
+    //bliP - don't allow anarchy mode to go on too long / server is empty
+    if ((self.weapon > 0) && (self.weapon < time) || (!TV_numplayers)) //server's empty!
+    {
+	self.health = 0; // reset timer
+	self.weapon = 0;
+	TV_state = 0; // reset decisions
+        TV_anarchy_mode = 0; //bliP
+
+        if ((TV_numplayers > 0) || (TV_numobservers > 0))
+        {
+          bprint(PRINT_HIGH, "Maximum anarchy mode time reached, voting restarted\n");
+          BroadcastSound(Soundstring(4));
+        }
+
+	pl = find (world, classname, "player");
+       	while (pl != world)
+        {
+	    pl.observer = 0;
+	    pl.can_respawn = 1;
+
+	    pl.takedamage = DAMAGE_YES;
+	    if (pl.deadflag >= DEAD_DYING)
+              pl.deathtype = "respawn";
+            else
+  	      pl.deathtype = "implode";
+	    T_Damage(pl, world, world, 5000);
+       	    pl = find (pl, classname, "player");
+        }
+	return;
+    }
+
+    mt = 0; mv = 0; ma = 0; nt = 0; nv = 0; na = 0;
+
+    if (key_min_time > 0)
+    {
+	mt = 1;
+	if (self.health > key_min_time)
+	    mt = 2;
+    }
+    if (key_min_votes > 0)
+    {
+	mv = 1;
+	if (key_min_votes < 1) // percent mode
+	{
+	    if ((key_min_votes * 100) < TV_voters_percent)
+		mv = 2;
+	} // number mode
+	else if (key_min_votes <= TV_numvoters) 
+		mv = 2;        
+    }
+    if (key_min_approval > 0)
+    {
+	ma = 1;
+	if (key_min_approval < 1) // percent mode
+	{
+	    if ((key_min_approval * 100) < TV_highest_percent)
+		ma = 2;
+	} // number mode
+	else if (key_min_approval <= TV_highest_count) 
+		ma = 2;        
+    }
+    if (key_nuf_time > 0)
+    {
+	nt = 1;
+	if (self.health > key_nuf_time)
+	    nt = 2;
+    }
+    if (key_nuf_votes > 0)
+    {
+	nv = 1;
+	if (key_nuf_votes < 1) // percent mode
+	{
+	    if ((key_nuf_votes * 100) < TV_voters_percent)
+		nv = 2;
+	} // number mode
+	else if (key_nuf_votes <= TV_numvoters) 
+		nv = 2;        
+    }
+    if (key_nuf_approval > 0)
+    {
+	na = 1;
+	if (key_nuf_approval < 1) // percent mode
+	{
+	    if ((key_nuf_approval * 100) < TV_highest_percent)
+		na = 2;
+	} // number mode
+	else if (key_nuf_approval <= TV_highest_count)
+		na = 2;        
+    }
+
+    // all vars set
+    if ( ((!mt) && (!mv) && (!ma) && (!nt) && (!nv) && (!na)) && (TV_numvoters) && (!TV_draws) ) // no rules: choice is made if there are no draws
+	TV_state = 1;
+
+    else if ( (mt != 1) && (mv != 1) && (ma != 1) && ((mt == 2) || (mv == 2) || (ma == 2)) && (!TV_draws) ) // mins satisfied
+	TV_state = 1;
+
+    else if (nt == 2) // timeover
+    {
+	if ((TV_draws) || (TV_numvoters == 0)) // ANARCHY MODE
+	{
+	    s = infokey(world, "no_anarchy");
+	    if ((s == "") || (s == "0"))
+		if (TV_state != 3)
+		    TV_state = 2;
+	}
+	else TV_state = 1;
+    }
+
+//    else if ( ((nv == 2) || (na == 2)) && (mt != 1) && (mv != 1) && (ma != 1) && (TV_numvoters) && (!TV_draws) ) // enough votes and/or approval
+//        TV_state = 1;
+//    else if ( (nv == 2) && (mt != 1) && (ma != 1) && (TV_numvoters) && (!TV_draws) ) // enough votes
+//        TV_state = 1;
+//    else if ( (na == 2) && (mt != 1) && (mv != 1) && (TV_numvoters) && (!TV_draws) ) // enough approval
+//        TV_state = 1;
+    else if ( (nv == 2) && (TV_numvoters) && (!TV_draws) ) // enough votes
+	TV_state = 1;
+    else if ( (na == 2) && (TV_numvoters) && (!TV_draws) ) // enough approval
+	TV_state = 1;
+
+
+    if (TV_state == 1) // make decision
+    {        
+        bprint(PRINT_HIGH, "\n◊ÈÓÓÈÓÁ†Ì·∫ ");
+        bprint(PRINT_HIGH, TV_best_map_name);
+        bprint(PRINT_HIGH, " (");
+        bprint(PRINT_HIGH, TV_best_map_desc);
+        bprint(PRINT_HIGH, ") with ");
+	s = ftos(TV_highest_count);
+	bprint(PRINT_HIGH, s);
+	bprint(PRINT_HIGH, " (");
+	s = ftos(TV_highest_percent);
+	bprint(PRINT_HIGH, s);
+	bprint(PRINT_HIGH, "%) votes\n");
+//        bprint(PRINT_HIGH, "ƒÔ˜ÓÏÔ·‰†ÙËÈÛ†Ì·∫ http://nztf.ausfortress.com/maps/?map=");
+//        bprint(PRINT_HIGH, TV_best_map_name);
+//        bprint(PRINT_HIGH, "\n");
+	TV_state = -1; // decision has been made
+	ChangeTheMap ();
+    }
+    else if (TV_state == 2) // ANARCHY MODE !!!
+    {
+	TV_state = 3;
+        bprint(PRINT_HIGH, "\n¡Œ¡“√»Ÿ†Õœƒ≈°\n"); //bliP
+        if (TV_numplayers > 1)
+            bprint(PRINT_HIGH, "ÀÈÏÏ†ÙËÂ†ÔÔÛÈÓÁ†ˆÔÙÂÚÛ°\n\n"); //kill the opposing voters!
+        else  
+            bprint(PRINT_HIGH, "\n"); //no opposing voters
+	SetAnarchy ();
+        TV_anarchy_mode = 1; //bliP
+        f = 125;
+        //if (key_max_time > 0) //anarchy mode time bliP
+        //f = key_max_time * 60;
+        self.weapon = time + f;
+	self.frags = 0;
+    }
+};
+
+/*
+===========
+ThunderVote: UnBindAll
+
+unbinds aliases from every player
+============
+*/
+void() UnBindAll =
+{
+    local entity cand, dude;
+
+    dude = find (world, classname, "player");
+    while (dude != world)
+    {
+	stuffcmd(dude, "team \"\"\nbf\n");
+	dude = find (dude, classname, "player");
+    }    
+};
+
+/*
+===========
+ThunderVote: DumpCandidates
+
+dumps map candidate names and info
+============
+*/
+void() DumpCandidates =
+{
+    local entity cand;
+    local float f;
+    local string s, s2;
+
+//    s = infokey(world, "no_rep");
+//    f = stof(s);
+//    if (f != 0)
+//    {
+//        sprint(self, PRINT_HIGH, "éé Maps not allowed to be chosen more than ");
+//        if (f == 1)
+//            sprint(self, PRINT_HIGH, "once in a row\n");
+//        else if (f == 2)
+//            sprint(self, PRINT_HIGH, "twice in a row\n");
+//        else
+//        {
+//            sprint(self, PRINT_HIGH, s);
+//            sprint(self, PRINT_HIGH, " times in a row\n");
+//        }
+//    }
+    sprint(self, PRINT_HIGH, "√ËÔÔÛÂ†·†Ì·∫\n");
+
+    s2 = "";
+    s2 = infokey(self, "no_alias");
+    if (s2 == "")
+	s2 = "0";
+
+    cand = find (world, classname, "map_candidate");
+    while (cand != world)
+    {
+        if (s == "0")
+            sprint(self, PRINT_HIGH, cand.map_list_imp);
+        else
+            sprint(self, PRINT_HIGH, cand.map_list_txt);
+        sprint(self, PRINT_HIGH, cand.map_desc);
+        sprint(self, PRINT_HIGH, "\n");
+	cand = find (cand, classname, "map_candidate");
+    }
+    sprint(self, PRINT_HIGH, "úUse Õ¡–»≈Ã– to view map list, PgUp/PgDn to scroll the console\n");
+    sprint(self, PRINT_HIGH, "úType in the console the name of the map you want to vote for\n");
+};
+
+/*
+================
+ThunderVote: MOTD
+
+Message of the Day function
+================
+*/
+
+void() MOTD =
+{
+    local string motd1, motd2, tmp, tmp2, s;
+    local float t;
+    local entity chek;
+
+    chek = find(world, classname, "motd_stuff");
+    if (chek)
+	t = chek.delay;
+
+    motd1 = infokey(world, "motd1");
+    tmp = "\n";
+    motd2 = infokey(world, "motd2");
+    tmp2 = "‘ËıÓ‰ÂÚ÷ÔÙÂîèìì by Neurobasher\n’‰·ÙÂ‰†‚˘†‚ÏÈ–\nView the console for voting instructions\n\n";
+
+    s = "";
+    s = infokey(self, "no_motd");
+    if ( (s != "") && (s != "0") )
+    {
+	self.motd_time = 0;
+//        DumpCandidates ();
+	return;
+    }
+    if (TV_state == 3) // Anarchy Mode
+    {
+	self.motd_time = 0;
+	return;
+    }
+
+    if ( (self.motd_count > 5) && ((self.realteam != "----") || (chek == world)) )
+    {
+	self.motd_time = 0;
+	return;
+    }
+    if (self.motd_count < 5)
+    {
+	self.motd_time = time + 1;
+	self.motd_count = self.motd_count + 1;
+	centerprint(self, tmp2, motd1, tmp, motd2, tmp, tmp);
+	return;
+    }
+    else if (self.motd_count == 5)
+    {
+	self.motd_time = time + 1;
+	self.motd_count = self.motd_count + 1;
+        tmp2 = "‘ËıÓ‰ÂÚ÷ÔÙÂîèì by Neurobasher\n’‰·ÙÂ‰†‚˘†‚ÏÈ–\nView the console for voting instructions\n\n";
+	sprint (self, PRINT_HIGH, tmp2);
+	sprint (self, PRINT_HIGH, motd1);
+	sprint (self, PRINT_HIGH, "\n");
+	sprint (self, PRINT_HIGH, motd2);
+	sprint (self, PRINT_HIGH, "\n\n");
+	s = infokey(world, "no_maphelp");
+	if ((s == "") || (s == "0"))
+	    DumpCandidates ();
+	return;
+    }
+    else if ((self.motd_count > 5) && (self.motd_count < (5 + t)))
+    {
+	if (t >= 1) {self.motd_time = time + 1; self.motd_count = self.motd_count + 1;}
+	  else
+	{self.motd_time = time + t; self.motd_count = self.motd_count + t;}
+	if (chek.netname != "") centerprint (self, chek.netname);
+	else if ((chek.target == "") && (chek.targetname == "") && (chek.message == "") && (chek.noise1 == "") && (chek.noise2 == "") && (chek.noise3 == "") && (chek.noise4 == ""))
+	    self.motd_time = 0;
+    }
+    else if (self.motd_count < (5 + 2 * t))
+    {
+	if (t >= 1) {self.motd_time = time + 1; self.motd_count = self.motd_count + 1;}
+	  else
+	{self.motd_time = time + t; self.motd_count = self.motd_count + t;}
+	if (chek.target != "") centerprint (self, chek.target);
+	else if ((chek.targetname == "") && (chek.message == "") && (chek.noise1 == "") && (chek.noise2 == "") && (chek.noise3 == "") && (chek.noise4 == ""))
+	    self.motd_time = 0;
+    }
+    else if (self.motd_count < (5 + 3 * t))
+    {
+	if (t >= 1) {self.motd_time = time + 1; self.motd_count = self.motd_count + 1;}
+	  else
+	{self.motd_time = time + t; self.motd_count = self.motd_count + t;}
+	if (chek.targetname != "") centerprint (self, chek.targetname);
+	else if ((chek.message == "") && (chek.noise1 == "") && (chek.noise2 == "") && (chek.noise3 == "") && (chek.noise4 == ""))
+	    self.motd_time = 0;
+    }
+    else if (self.motd_count < (5 + 4 * t))
+    {
+	if (t >= 1) {self.motd_time = time + 1; self.motd_count = self.motd_count + 1;}
+	  else
+	{self.motd_time = time + t; self.motd_count = self.motd_count + t;}
+	if (chek.message != "") centerprint (self, chek.message);
+	else if ((chek.noise1 == "") && (chek.noise2 == "") && (chek.noise3 == "") && (chek.noise4 == ""))
+	    self.motd_time = 0;
+    }
+    else if (self.motd_count < (5 + 5 * t))
+    {
+	if (t >= 1) {self.motd_time = time + 1; self.motd_count = self.motd_count + 1;}
+	  else
+	{self.motd_time = time + t; self.motd_count = self.motd_count + t;}
+	if (chek.noise1 != "") centerprint (self, chek.noise1);
+	else if ((chek.noise2 == "") && (chek.noise3 == "") && (chek.noise4 == ""))
+	    self.motd_time = 0;
+    }
+    else if (self.motd_count < (5 + 6 * t))
+    {
+	if (t >= 1) {self.motd_time = time + 1; self.motd_count = self.motd_count + 1;}
+	  else
+	{self.motd_time = time + t; self.motd_count = self.motd_count + t;}
+	if (chek.noise2 != "") centerprint (self, chek.noise2);
+	else if ((chek.noise3 == "") && (chek.noise4 == ""))
+	    self.motd_time = 0;
+    }
+    else if (self.motd_count < (5 + 7 * t))
+    {
+	if (t >= 1) {self.motd_time = time + 1; self.motd_count = self.motd_count + 1;}
+	  else
+	{self.motd_time = time + t; self.motd_count = self.motd_count + t;}
+	if (chek.noise3 != "") centerprint (self, chek.noise3);
+	else if (chek.noise4 == "")
+	    self.motd_time = 0;
+    }
+    else if (self.motd_count < (5 + 8 * t))
+    {
+	if (t >= 1) {self.motd_time = time + 1; self.motd_count = self.motd_count + 1;}
+	  else
+	{self.motd_time = time + t; self.motd_count = self.motd_count + t;}
+	if (chek.noise4 != "") centerprint (self, chek.noise4);
+	else self.motd_time = 0;
+    }
+    else
+	self.motd_time = 0;
+};
+
+/*
+============
+ThunderVote: TF_ID
+
+Identifies someone (stolen from TF code)
+============
+*/
+void() TF_ID =
+{
+	local vector src;
+    local string st, st2, st3, st4;
+    local entity enty;
+
+	src = self.origin + v_forward*10;
+	src_z = self.absmin_z + self.size_z * 0.7;
+    traceline (src, src + v_forward*2048, FALSE, self);
+
+	if (trace_ent != world && trace_ent.origin != world.origin )
+	{
+		if (trace_ent.classname == "player" && trace_ent.health > 0)
+	{
+	    st = trace_ent.realteam;
+	    if (st == "----")
+		centerprint(self, "\n\n\n\n", trace_ent.netname, "\nhasn't voted yet");
+	    else
+	    {
+		enty = find(world, classname, "map_candidate");
+		while ((enty != world) && (enty.realteam != st))
+		    enty = find(enty, classname, "map_candidate");
+		st2 = enty.map_name;
+		st4 = infokey(self, "no_alias");
+		if ((st4 != "") && (st4 != "0"))
+		{
+		    st3 = enty.impulse_value;
+		    centerprint(self, "\n\n\n\n", trace_ent.netname, "\nvoted for ", st2, "\n(impulse ", st3, ")");
+		}
+		else
+		{
+		    st3 = enty.map_desc;
+		    centerprint(self, "\n\n\n\n", trace_ent.netname, "\nvoted for ", st2, "\n(", st3, ")");
+		}
+		
+	    }
+	}
+    }
+};
+
+/*
+tvote ResetPlayer
+bliP
+*/
+void() ResetPlayer =
+{
+	local float f;
+	local float i;
+	local string s;
+
+	stuffcmd(self, "cl_forwardspeed 320\ncl_backspeed 320\ncl_sidespeed 320\n");
+        stuffcmd(self, "setinfo apw \"\"\n");
+	stuffcmd(self, "setinfo adminpwd \"\"\n");
+
+        s = "";
+	s = infokey(self, "no_set");
+	if ((s != "") && (s != "0"))
+		return;
+
+	f = ceil(random()*13);
+	stuffcmd(self, "color ");
+	stuffcmd(self, ftos(f));
+	stuffcmd(self, " ");
+        i = ceil(random()*13);
+	while (i == f)
+	{
+		i = ceil(random()*13);
+	}
+	stuffcmd(self, ftos(i));
+	stuffcmd(self, "\n");
+
+	i = ceil(random()*9);
+	stuffcmd(self, "skin ");
+	stuffcmd(self, GetSkin(i));
+	stuffcmd(self, "\n");
+};
+
+string (float f) GetSkin =
+{
+	if (f == 1) return "tf_scout";
+	if (f == 2) return "tf_snipe";
+	if (f == 3) return "tf_sold";
+	if (f == 4) return "tf_demo";
+	if (f == 5) return "tf_medic";
+	if (f == 6) return "tf_hwguy";
+	if (f == 7) return "tf_pyro";
+	if (f == 8) return "tf_spy";
+	return "tf_eng";
+};
+
+/*
+===========
+ThunderVote: BindAliases
+
+binds aliases
+============
+*/
+
+void() BindAliases =
+{
+    //foo = foo + 1;
+    local entity cand;
+    local string s;
+    local float f, g;
+
+    s = "";
+    s = infokey(self, "no_alias");
+    if ((s != "") && (s != "0"))
+	return;
+    if (self.alias_num == 0)
+    {
+	sprint (self, PRINT_HIGH, "úCreating aliases...\n");
+	stuffcmd(self, "alias id impulse 185\n");
+	stuffcmd(self, "alias maphelp impulse 131\n");
+    }
+    g = 0;
+    f = self.alias_num + 8;
+    cand = find (world, classname, "map_candidate");
+    while (cand)
+    {
+	g = g + 1;
+	if (g > self.alias_num)
+	{
+	    stuffcmd(self, "alias ");
+	    stuffcmd(self, cand.map_name);
+	    stuffcmd(self, " impulse ");
+	    stuffcmd(self, cand.impulse_value);
+	    stuffcmd(self, "\n");
+	}
+	if (g == f)
+	    cand = world;
+	else
+	{
+	    cand = find (cand, classname, "map_candidate");
+	    if (cand == world)
+	    {
+		self.alias_delay = 0;
+		return;
+	    }
+	}
+    }
+    self.alias_num = f;
+    self.alias_delay = time + 0.4;
+};
+
+/*
+================
+PlayerPreThink
+
+Called every frame before physics are run
+================
+*/
+void() PlayerPreThink =
+{
+	local   float   mspeed, aspeed;
+	local   float   r;
+    local   string  s, t;
+
+	if (intermission_running)
+	{
+		IntermissionThink ();   // otherwise a button could be missed between
+		return;                                 // the think tics
+	}
+
+	if (self.view_ofs == '0 0 0')
+		return;         // intermission or finale
+
+	makevectors (self.v_angle);             // is this still used
+// ThunderVote
+	if (self.motd_time && self.motd_time < time)
+		MOTD();
+
+    if (self.alias_delay && self.alias_delay < time)
+    {
+	BindAliases ();
+    }
+
+    if (!self.motd_time && self.id_delay < time)
+    {
+	self.id_delay = time + 1.5;
+	s = "";
+	s = infokey(world, "no_id");
+	if ( (s != "") && (s != "0") )
+	  return;
+	t = "";
+	t = infokey(self, "no_id");
+	if ( (t != "") && (t != "0") )
+	  return;
+	TF_ID();
+    }
+
+    if (self.team_check && self.team_check < time)
+    {
+	s = ftos(time);
+
+	self.team_check = time + 1;
+	s = infokey(self, "team");
+	if (s != self.realteam)
+	{
+	    stuffcmd(self, "team ");
+	    stuffcmd(self, self.realteam);
+	    stuffcmd(self, "\n");
+	}
+    }
+
+	self.deathtype = "";
+
+//    CheckRules ();
+	WaterMove ();
+/*
+	if (self.waterlevel == 2)
+		CheckWaterJump ();
+*/
+
+	if (self.deadflag >= DEAD_DEAD)
+	{
+// ThunderVote: sorry, dead ppl can't do shit
+		self.vote = "";
+	  	self.realteam = "----";
+
+		if (self.can_respawn == 1)
+		{
+		        PlayerDeathThink ();
+		}
+		return;
+	}
+	
+	if (self.deadflag == DEAD_DYING)
+		return; // dying, so do nothing
+
+	if (self.button2)
+	{
+		PlayerJump ();
+	}
+	else
+		self.flags = self.flags | FL_JUMPRELEASED;
+
+// teleporters can force a non-moving pause time        
+	if (time < self.pausetime)
+		self.velocity = '0 0 0';
+
+	if(time > self.attack_finished && self.currentammo == 0 && self.weapon != IT_AXE)
+	{
+		self.weapon = W_BestWeapon ();
+		W_SetCurrentAmmo ();
+	}
+};
+
+/*
+===========
+ClientConnect
+
+called when a player connects to a server
+============
+*/
+void() ClientConnect =
+{
+    local string s;
+
+    bprint (PRINT_HIGH, self.netname);
+    bprint (PRINT_HIGH, " joined\n");
+
+    if (self.netname == string_null) { //bliP
+      stuffcmd (self, "disconnect\n");
+    }
+    stuffcmd(self, "exec vote.cfg\n");    // Elmar Hoffman 05-11
+
+    self.motd_time = time + 3;
+    self.motd_count = 0;
+    self.team_check = time + 0.5;
+    self.vote_delay = time + 0.1;
+    s = "";
+    s = infokey(self, "no_alias");
+    if (s != "" && s != "0")
+	self.alias_delay = 0;
+    else
+	self.alias_delay = time + 0.1;
+    self.alias_num = 0;
+    self.vote = "";
+    self.realteam = "----";
+
+    ResetPlayer(); //bliP
+
+// a client connecting during an intermission can cause problems
+	if (intermission_running)
+		GotoNextMap ();
+};
+
+/*
+===========
+ClientDisconnect
+
+called when a player disconnects from a server
+============
+*/
+void() ClientDisconnect =
+{
+    self.vote = "";
+    self.classname = "";
+//    CheckVotes ();    
+    // let everyone else know
+	bprint (PRINT_HIGH, self.netname);
+	bprint (PRINT_HIGH, " left the game\n");
+	sound (self, CHAN_BODY, "player/tornoff2.wav", 1, ATTN_NONE);
+	set_suicide_frame ();
+};
+
+/*
+============
+ThunderVote: LightningFX
+============
+*/
+void() LightningFX =
+{
+
+    local float f;
+    local vector v;
+
+    makevectors(self.angles);
+
+    v = self.origin;
+//    v_x = v_y + crandom()*2000;
+//    v_y = v_y + crandom()*2000;
+    v_z = v_z + 9192;
+
+    traceline(self.origin, v, TRUE, self);
+    
+    WriteByte(MSG_ALL, SVC_TEMPENTITY);
+    WriteByte(MSG_ALL, TE_LIGHTNING1);
+    WriteEntity(MSG_ALL, self);
+    WriteCoord(MSG_ALL, self.origin_x);
+    WriteCoord(MSG_ALL, self.origin_y);
+    WriteCoord(MSG_ALL, self.origin_z + 8);
+    WriteCoord(MSG_ALL, trace_endpos_x);
+    WriteCoord(MSG_ALL, trace_endpos_y);
+    WriteCoord(MSG_ALL, trace_endpos_z + 8);
+    multicast(self.origin, MULTICAST_PVS);
+//    remove(e);
+};
+
+/*
+============
+ThunderVote: VotesNeeded
+
+============
+*/
+void() VotesNeeded =
+{
+    local string s, s2;
+
+    CountVotes ();
+    bprint(PRINT_HIGH, "\n(");
+    bprint(PRINT_HIGH, "which now has ");
+    s = F2S(TV_current_count);
+    bprint(PRINT_HIGH, s);
+    bprint(PRINT_HIGH, " ");
+    bprint(PRINT_HIGH, "vote");
+    if (TV_current_count > 1)
+	bprint(PRINT_HIGH, "s");
+    bprint(PRINT_HIGH, ", ");
+    s2 = F2S(TV_current_percent2);
+    bprint(PRINT_HIGH, s2);
+    bprint(PRINT_HIGH, "%)\n");
+};
+
+/*
+============
+ImpulseCommands
+
+============
+*/
+void() ImpulseCommands =
+{
+    local entity cand;
+    local string impstr, st, st2;
+    local float f, g, howmany;
+
+    /*
+    if (self.impulse == 9)
+    {
+	self.ammo_rockets = 900;
+	self.ammo_nails = 200;
+	self.ammo_shells = 100;
+	self.items = self.items | 
+		IT_AXE |
+		IT_SHOTGUN |
+		IT_SUPER_SHOTGUN |
+		IT_NAILGUN |
+		IT_SUPER_NAILGUN |
+		IT_GRENADE_LAUNCHER |
+		IT_ROCKET_LAUNCHER |
+		IT_KEY1 | IT_KEY2;
+	self.ammo_cells = 200;
+	self.items = self.items | IT_LIGHTNING;
+
+	self.weapon = IT_ROCKET_LAUNCHER;
+	self.impulse = 0;
+	W_SetCurrentAmmo ();
+      self.impulse = 0;
+      return;
+    }
+    */
+
+    impstr = ftos(self.impulse);
+    cand = find (world, impulse_value, impstr);
+    if (cand) // VOTE
+    {
+ 	if (self.observer == 1) //bliP
+	{
+	    sprint(self, PRINT_HIGH, "Please wait until Anarchy Mode is over before voting\n");
+	    stuffcmd(self, "play ");
+	    st2 = Soundstring(2);
+	    stuffcmd(self, st2);
+	    stuffcmd(self, "\n");
+	    self.impulse = 0;
+	    return;
+	}
+
+	if (self.deadflag != 0) // dead player
+	{
+	    sprint(self, PRINT_HIGH, "You can't vote if you're dead\n");
+	    stuffcmd(self, "play ");
+	    st2 = Soundstring(2);
+	    stuffcmd(self, st2);
+	    stuffcmd(self, "\n");
+	    self.impulse = 0;
+	    return;
+	}
+
+	if (self.vote == cand.map_name)
+	{
+	    sprint(self, PRINT_HIGH, "You've already voted for this map\n");
+	    stuffcmd(self, "play ");
+	    st2 = Soundstring(2);
+	    stuffcmd(self, st2);
+	    stuffcmd(self, "\n");
+	    self.impulse = 0;
+	    return;
+	}
+	if (cand.frags != 0)
+	{
+	    sprint(self, PRINT_HIGH, "This map is temporarily unavailable for voting\n");
+	    stuffcmd(self, "play ");
+	    st2 = Soundstring(2);
+	    stuffcmd(self, st2);
+	    stuffcmd(self, "\n");
+	    self.impulse = 0;
+	    return;
+	}
+	if (TV_state == 1)
+	{
+	    sprint(self, PRINT_HIGH, "The voting has ended. You can't vote now\n");
+	    stuffcmd(self, "play ");
+	    st2 = Soundstring(2);
+	    stuffcmd(self, st2);
+	    stuffcmd(self, "\n");
+	    self.impulse = 0;
+	    return;
+	}
+	if (self.vote_delay > time)
+	{
+	    sprint(self, PRINT_HIGH, "Please wait ");
+	    f = self.vote_delay - time;
+	    f = ceil(f);
+	    st = ftos(f);
+	    sprint(self, PRINT_HIGH, st);
+	    if (f == 1)
+		sprint(self, PRINT_HIGH, " second ");
+	    else
+		sprint(self, PRINT_HIGH, " seconds ");
+
+	    sprint(self, PRINT_HIGH, "before changing your vote\n");
+	    stuffcmd(self, "play ");
+	    st2 = Soundstring(2);
+	    stuffcmd(self, st2);
+	    stuffcmd(self, "\n");
+	    self.impulse = 0;
+	    return;
+	}
+	if (cand.user_limit > 0)
+	{
+	    if (TV_numplayers > cand.user_limit)
+	    {
+	    	sprint(self, PRINT_HIGH, "Cannot vote for map, too many players\n");
+	    	stuffcmd(self, "play ");
+	    	st2 = Soundstring(2);
+	    	stuffcmd(self, st2);
+	    	stuffcmd(self, "\n");
+	    	self.impulse = 0;
+	    	return;
+	    }
+	}
+	self.realteam = cand.realteam;
+	self.frags = 1;
+	st2 = Soundstring(1);
+	sound (self, CHAN_BODY, st2, 1, ATTN_NORM);
+	self.effects = self.effects | EF_DIMLIGHT;
+	stuffcmd (self, "bf\n");
+
+	st2 = "";
+	st2 = infokey(world, "vote_wait");
+	if ( (st2 == "") || (st2 == "0") ) st2 = "10";
+	g = stof(st2);
+	self.vote_delay = time + g;
+
+	if (self.vote == "")
+	{
+            self.health = 250; //bliP
+	    self.vote = cand.map_name;
+	    LightningFX();
+	    bprint(PRINT_HIGH, self.netname);
+	    bprint(PRINT_HIGH, " votes for ");
+	    bprint(PRINT_HIGH, cand.map_name);
+	    VotesNeeded ();
+//            bprint(PRINT_HIGH, "\n");
+	}
+	else
+	{
+	    self.vote = cand.map_name;
+	    LightningFX();
+	    bprint(PRINT_HIGH, self.netname);
+	    bprint(PRINT_HIGH, " changes his vote to ");
+	    bprint(PRINT_HIGH, cand.map_name);
+	    VotesNeeded ();
+//            bprint(PRINT_HIGH, "\n");
+	}
+
+    }
+    if (self.impulse == 185) //TF ID
+	TF_ID ();
+    if (self.impulse == 131) //MAPHELP -> DumpCandidates
+	DumpCandidates ();
+
+    self.impulse = 0;
+};
